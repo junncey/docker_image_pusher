@@ -1,1 +1,9 @@
-6053537/portainer-ce
+6053537/portainer-ce:2.19.5
+snowdreamtech/frps:0.60
+# 20240910
+mbentley/teamspeak:latest
+filebrowser/filebrowser:v2.31.1
+nacos/nacos-server:v2.4.2
+mysql:8.0-debian
+gladtbam/ms365_e5_renewx:latest
+mysql:5.7-debian
