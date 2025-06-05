@@ -1,7 +1,5 @@
 6053537/portainer-ce:latest
 snowdreamtech/frps:latest
-# 20240910
-mbentley/teamspeak:latest
 filebrowser/filebrowser:latest
 nacos/nacos-server:v2.2.3
 mysql:8.0-debian
@@ -10,3 +8,4 @@ mysql:5.7-debian
 redis:latest
 postgres:latest
 rabbitmq:management
+teamspeak:latest
