@@ -4,6 +4,7 @@ snowdreamtech/frps:latest
 mbentley/teamspeak:latest
 filebrowser/filebrowser:latest
 nacos/nacos-server:latest
+nacos/nacos-server:v2.2.3
 mysql:8.0-debian
 gladtbam/ms365_e5_renewx:latest
 mysql:5.7-debian
