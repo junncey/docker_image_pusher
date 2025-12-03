@@ -10,3 +10,4 @@ postgres:latest
 rabbitmq:management
 teamspeak:latest
 wyx176/jrebel
+easytier/easytier:latest
