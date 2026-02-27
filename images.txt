@@ -11,3 +11,4 @@ rabbitmq:management
 teamspeak:latest
 wyx176/jrebel
 easytier/easytier:latest
+redis:7-alpine
