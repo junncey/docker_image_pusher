@@ -12,3 +12,7 @@ teamspeak:latest
 wyx176/jrebel
 easytier/easytier:latest
 redis:7-alpine
+maven:3.9-eclipse-temurin-21
+eclipse-temurin:21-jre-alpine
+node:20-alpine
+nginx:alpine
