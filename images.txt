@@ -16,3 +16,5 @@ maven:3.9-eclipse-temurin-21
 eclipse-temurin:21-jre-alpine
 node:20-alpine
 nginx:alpine
+apache/skywalking-ui:9.2.0
+apache/skywalking-oap-server:9.2.0
