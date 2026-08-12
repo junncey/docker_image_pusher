@@ -17,3 +17,4 @@ eclipse-temurin:21-jre-alpine
 node:20-alpine
 nginx:alpine
 ghcr.io/openclaw/openclaw:latest
+nousresearch/hermes-agent:latest
