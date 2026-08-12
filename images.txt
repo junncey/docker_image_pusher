@@ -18,3 +18,4 @@ node:20-alpine
 nginx:alpine
 ghcr.io/openclaw/openclaw:latest
 nousresearch/hermes-agent:latest
+dreamacro/clash:latest
