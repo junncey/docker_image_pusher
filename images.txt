@@ -7,15 +7,12 @@ gladtbam/ms365_e5_renewx:latest
 mysql:5.7-debian
 redis:latest
 postgres:latest
-rabbitmq:management
 teamspeak:latest
 wyx176/jrebel
-easytier/easytier:latest
 redis:7-alpine
 maven:3.9-eclipse-temurin-21
 eclipse-temurin:21-jre-alpine
 node:20-alpine
 nginx:alpine
-ghcr.io/openclaw/openclaw:latest
 nousresearch/hermes-agent:latest
 dreamacro/clash:latest
