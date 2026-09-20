@@ -12,3 +12,4 @@ wyx176/jrebel
 redis:7-alpine
 nousresearch/hermes-agent:latest
 dreamacro/clash:latest
+easytier/easytier:latest
