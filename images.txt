@@ -1,6 +1,6 @@
 6053537/portainer-ce:latest
 snowdreamtech/frps:latest
-filebrowser/filebrowser:latest
+ghcr.io/gtsteffaniak/filebrowser:stable
 nacos/nacos-server:v2.2.3
 mysql:8.0-debian
 gladtbam/ms365_e5_renewx:latest
