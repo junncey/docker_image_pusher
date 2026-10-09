@@ -6,8 +6,6 @@ mysql:8.0-debian
 gladtbam/ms365_e5_renewx:latest
 mysql:5.7-debian
 redis:latest
-postgres:latest
-teamspeak:latest
 wyx176/jrebel
 redis:7-alpine
 nousresearch/hermes-agent:latest
