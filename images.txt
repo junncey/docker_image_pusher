@@ -11,5 +11,5 @@ redis:7-alpine
 nousresearch/hermes-agent:latest
 dreamacro/clash:latest
 easytier/easytier:latest
-coturn:latest
-rnacos:stable
+coturn/coturn:latest
+qingpan/rnacos:stable
