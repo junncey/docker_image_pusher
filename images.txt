@@ -16,3 +16,4 @@ qingpan/rnacos:stable
 nginx:latest
 gitriver/gitriver:latest
 postgres:latest
+postgres:18
