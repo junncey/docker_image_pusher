@@ -14,6 +14,6 @@ easytier/easytier:latest
 coturn/coturn:latest
 qingpan/rnacos:stable
 nginx:latest
-gitriver/gitriver:latest
+gitea/gitea:latest
 postgres:latest
 postgres:18
