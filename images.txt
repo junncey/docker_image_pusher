@@ -13,3 +13,4 @@ dreamacro/clash:latest
 easytier/easytier:latest
 coturn/coturn:latest
 qingpan/rnacos:stable
+nginx:latest
