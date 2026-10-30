@@ -17,3 +17,5 @@ nginx:latest
 gitea/gitea:latest
 postgres:latest
 postgres:18
+motricseven7/snowluma:latest
+soulter/astrbot:latest
