@@ -17,5 +17,6 @@ nginx:latest
 gitea/gitea:latest
 postgres:latest
 postgres:18
-motricseven7/snowluma:latest
+# motricseven7/snowluma 已从 Docker Hub 下架（2026-11-16 校验 404），
+# SnowLuma 现由自有 Dockerfile 构建后直推 ACR b1at/snowluma，无需再转存。
 soulter/astrbot:latest

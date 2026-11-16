@@ -74,7 +74,8 @@ jobs:
         fi
 
     - name: Checkout Code
-      uses: actions/checkout@v4
+      # v5 起改用 Node 24，避免 runner 上的 Node 20 弃用告警
+      uses: actions/checkout@v5
 
     # 说明：本任务只做 pull/tag/push，不需要 buildx，
     # 原来的 "Docker Setup Buildx" 步骤已移除，少一个对外网依赖的失败点。
