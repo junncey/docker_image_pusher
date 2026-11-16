@@ -1,5 +1,19 @@
 name: Docker
 
+# ------------------------------------------------------------
+# 把 images.txt 里的镜像逐个 pull → tag → push 到阿里云 ACR
+#
+# 2026-11-16 修复：原流程用 easimon/maximize-build-space 把
+# /var/lib/docker 挪到自建卷上，在新版 runner 镜像下该动作会把根分区
+# 写满，runner 连 diag 日志都写不下去：
+#   System.IO.IOException: No space left on device :
+#   /home/runner/actions-runner/cached/.../_diag/Worker_*.log
+# 表现为 job 在 "Docker Setup Buildx" 处卡住后直接失败（约 26s），
+# 定时任务则在 push 循环里跑到一半崩掉。
+# 现改为：不搬 docker 数据目录，只删 runner 自带的大体积工具链，
+# 每个镜像同步后立即清理，空间不足时提前给出可读告警。
+# ------------------------------------------------------------
+
 on:
   workflow_dispatch:
     inputs:
@@ -23,7 +37,13 @@ jobs:
 
   build:
     name: Pull
-    runs-on: ubuntu-latest
+    # 固定镜像是为了避免 ubuntu-latest 换版时磁盘布局变化再次踩坑；
+    # 本任务只用到 docker CLI，不依赖新特性。
+    runs-on: ubuntu-24.04
+    # 单个几十 GB 的镜像在国内线路下可能跑很久
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
     - name: Before freeing up disk space
       run: |
@@ -32,45 +52,56 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 增加可用磁盘空间
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@master
-      with:
-
-        root-reserve-mb: 2048
-        swap-size-mb: 128
-        remove-dotnet: 'true'
-        remove-haskell: 'true'
-        # 如果空间还是不够用，可以把以下开启，清理出更多空间
-        # remove-android: 'true'
-        # remove-codeql: 'true'
-        build-mount-path: '/var/lib/docker/'
-
-    - name: Restart docker
-      run: sudo service docker restart
-
-    - name: Free up disk space complete
+    # 只清理与本任务无关的大体积预装工具链，不动 docker 数据目录、
+    # 不做 swap、不挂载自建卷（那正是之前撑满根分区的原因）。
+    - name: Free up disk space
       run: |
-        echo "Free up disk space complete"
+        set -x
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /usr/local/share/boost
+        sudo apt-get clean
+        docker system prune -af --volumes || true
+        set +x
         echo "=============================================================================="
         df -hT
-        echo "=============================================================================="
+        FREE_KB=$(df --output=avail -k / | tail -1)
+        echo "根分区可用 ${FREE_KB} KB"
+        if [ "${FREE_KB}" -lt 8388608 ]; then
+          echo "::warning::根分区可用空间不足 8GB，大镜像可能拉取失败"
+        fi
 
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Docker Setup Buildx
-      uses: docker/setup-buildx-action@v3
+    # 说明：本任务只做 pull/tag/push，不需要 buildx，
+    # 原来的 "Docker Setup Buildx" 步骤已移除，少一个对外网依赖的失败点。
 
     - name: Build and push image Aliyun
+      shell: bash
       run: |
-        docker login -u $ALIYUN_REGISTRY_USER -p $ALIYUN_REGISTRY_PASSWORD $ALIYUN_REGISTRY
-        # 准备同步列表：手动触发且填写了 images 输入时只同步指定镜像，否则同步 images.txt 全部
+        set -o pipefail
+
+        # ---------- 凭据 ----------
+        if [ -z "${ALIYUN_REGISTRY}" ] || [ -z "${ALIYUN_REGISTRY_USER}" ] || [ -z "${ALIYUN_REGISTRY_PASSWORD}" ]; then
+          echo "::error::缺少 ACR 凭据 Secret（ALIYUN_REGISTRY / ALIYUN_REGISTRY_USER / ALIYUN_REGISTRY_PASSWORD）"
+          exit 1
+        fi
+        # 用 --password-stdin，避免密码出现在进程列表与日志里
+        echo "${ALIYUN_REGISTRY_PASSWORD}" | docker login -u "${ALIYUN_REGISTRY_USER}" --password-stdin "${ALIYUN_REGISTRY}" || {
+          echo "::error::登录 ACR 失败，请检查 ALIYUN_REGISTRY / 用户名 / 密码"
+          exit 1
+        }
+
+        # ---------- 准备同步列表 ----------
+        # 手动触发且填写了 images 输入时只同步指定镜像，否则同步 images.txt 全部
         SPECIFIED_IMAGES="${{ github.event.inputs.images }}"
-        if [ -n "$SPECIFIED_IMAGES" ]; then
-            echo "$SPECIFIED_IMAGES" | tr -d '\r' | sed -e 's/[,，]\+/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' > sync_images.txt || true
+        if [ -n "${SPECIFIED_IMAGES}" ]; then
+            echo "${SPECIFIED_IMAGES}" | tr -d '\r' | sed -e 's/[,，]\+/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' > sync_images.txt || true
             if [ ! -s sync_images.txt ]; then
-                echo "错误：指定了要同步的镜像，但解析后列表为空，请检查输入格式"
+                echo "::error::指定了要同步的镜像，但解析后列表为空，请检查输入格式"
                 exit 1
             fi
             echo "本次仅同步以下指定镜像："
@@ -79,100 +110,132 @@ jobs:
             cp images.txt sync_images.txt
             echo "未指定镜像，同步 images.txt 全部镜像"
         fi
-        # 数据预处理,判断镜像是否重名
+
+        # ---------- 数据预处理：判断镜像是否重名 ----------
         declare -A duplicate_images
         declare -A temp_map
         while IFS= read -r line || [ -n "$line" ]; do
-            # 忽略空行与注释
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then
                 continue
             fi
-            
-            # 获取镜像的完整名称，例如kasmweb/nginx:1.25.3（命名空间/镜像名:版本号）
+            # 取最后一个字段，兼容 "--platform=xxx image" 的写法
             image=$(echo "$line" | awk '{print $NF}')
-            # 将@sha256:等字符删除
             image="${image%%@*}"
-            echo "image $image"
-            # 获取镜像名:版本号  例如nginx:1.25.3
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-            echo "image_name_tag $image_name_tag"
-            # 获取命名空间 例如kasmweb,  这里有种特殊情况 docker.io/nginx，把docker.io当成命名空间，也OK
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
-            echo "name_space: $name_space"
-            # 这里不要是空值影响判断
             name_space="${name_space}_"
-            # 获取镜像名例如nginx
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
-            echo "image_name: $image_name"
-            
-            # 如果镜像存在于数组中，则添加temp_map
-            if [[ -n "${temp_map[$image_name]}" ]]; then
-                 # 如果temp_map已经存在镜像名，判断是不是同一命名空间
-                 if [[ "${temp_map[$image_name]}" != $name_space  ]]; then
-                    echo "duplicate image name: $image_name"
+
+            if [[ -n "${temp_map[$image_name]:-}" ]]; then
+                 if [[ "${temp_map[$image_name]}" != "${name_space}" ]]; then
+                    echo "duplicate image name: ${image_name}"
                     duplicate_images[$image_name]="true"
                  fi
             else
-                # 存镜像的命名空间
-                temp_map[$image_name]=$name_space
-            fi       
+                temp_map[$image_name]="${name_space}"
+            fi
         done < sync_images.txt
-        
-        
+
+        # ---------- 逐个同步 ----------
+        # 单个镜像失败不再中断整批：记录后继续跑完，最后统一以非零退出码收尾。
+        SUCCEEDED=()
+        FAILED=()
+        TOTAL=0
+
+        # 网络抖动时重试，最多 3 次
+        pull_with_retry() {
+          local img="$1" i
+          for i in 1 2 3; do
+            docker pull "${img}" && return 0
+            echo "第 ${i} 次拉取失败：${img}"
+            if [ "${i}" -lt 3 ]; then sleep 10; fi
+          done
+          return 1
+        }
+
         while IFS= read -r line || [ -n "$line" ]; do
-            # 忽略空行与注释
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then
                 continue
             fi
-        
-            echo "docker pull $line"
-            docker pull $line
+            TOTAL=$((TOTAL + 1))
+
             platform=$(echo "$line" | awk -F'--platform[ =]' '{if (NF>1) print $2}' | awk '{print $1}')
-            echo "platform is $platform"
-            # 如果存在架构信息 将架构信息拼到镜像名称前面
-            if [ -z "$platform" ]; then
+            if [ -z "${platform}" ]; then
                 platform_prefix=""
             else
                 platform_prefix="${platform//\//_}_"
             fi
-            echo "platform_prefix is $platform_prefix"
-            # 获取镜像的完整名称，例如kasmweb/nginx:1.25.3（命名空间/镜像名:版本号）
-            image=$(echo "$line" | awk '{print $NF}')
 
-            # 获取 镜像名:版本号  例如nginx:1.25.3
+            image=$(echo "$line" | awk '{print $NF}')
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-            # 获取命名空间 例如kasmweb  这里有种特殊情况 docker.io/nginx，把docker.io当成命名空间，也OK
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
-            # 获取镜像名例  例如nginx
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
-        
+
             name_space_prefix=""
-            # 如果镜像名重名
-            if [[ -n "${duplicate_images[$image_name]}" ]]; then
-               #如果命名空间非空，将命名空间加到前缀
+            if [[ -n "${duplicate_images[$image_name]:-}" ]]; then
                if [[ -n "${name_space}" ]]; then
                   name_space_prefix="${name_space}_"
                fi
             fi
-            
-            # 将@sha256:等字符删除
+
             image_name_tag="${image_name_tag%%@*}"
-            new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag"
-            echo "docker tag $image $new_image"
-            docker tag $image $new_image
-            echo "docker push $new_image"
-            docker push $new_image
-            echo "开始清理磁盘空间"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="
-            docker rmi $image
-            docker rmi $new_image
-            echo "磁盘空间清理完毕"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="     
-            
+            new_image="${ALIYUN_REGISTRY}/${ALIYUN_NAME_SPACE}/${platform_prefix}${name_space_prefix}${image_name_tag}"
+
+            echo "::group::同步 ${line} -> ${new_image}"
+            echo "docker pull ${line}"
+            if ! pull_with_retry "${line}"; then
+                echo "::error::拉取失败：${line}（镜像不存在 / 需认证 / 网络问题，已跳过）"
+                FAILED+=("${line}")
+                echo "::endgroup::"
+                continue
+            fi
+
+            echo "docker tag ${image} ${new_image}"
+            echo "docker push ${new_image}"
+            if docker tag "${image}" "${new_image}" && docker push "${new_image}"; then
+                SUCCEEDED+=("${new_image}")
+            else
+                echo "::error::推送失败：${new_image}"
+                FAILED+=("${line}")
+            fi
+
+            # 每个镜像同步完立即清理，避免几十个镜像累积把磁盘吃满
+            docker image rm -f "${image}" >/dev/null 2>&1 || true
+            docker image rm -f "${new_image}" >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null 2>&1 || true
+            echo "剩余磁盘："
+            df -h / | tail -1
+            echo "::endgroup::"
         done < sync_images.txt
+
+        # ---------- 汇总 ----------
+        {
+          echo "## 镜像同步结果"
+          echo ""
+          echo "- 总计：${TOTAL}，成功：${#SUCCEEDED[@]}，失败：${#FAILED[@]}"
+          echo ""
+          if [ "${#SUCCEEDED[@]}" -gt 0 ]; then
+            echo "### 成功"
+            printf -- '- `%s`\n' "${SUCCEEDED[@]}"
+            echo ""
+          fi
+          if [ "${#FAILED[@]}" -gt 0 ]; then
+            echo "### 失败"
+            printf -- '- `%s`\n' "${FAILED[@]}"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "${#FAILED[@]}" -gt 0 ]; then
+          echo "::error::有 ${#FAILED[@]} 个镜像同步失败，详见上方日志与运行摘要"
+          exit 1
+        fi
+        echo "全部镜像同步完成"
+
+    - name: Cleanup
+      # 无论成败都清一次，释放 runner 磁盘
+      if: always()
+      run: |
+        docker system prune -af --volumes || true
+        df -hT
